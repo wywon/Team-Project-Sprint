@@ -1,0 +1,19 @@
+# 줄바꿈 통일
+# ─────────────────────────────────────────────────────────────
+# 팀원 OS가 섞여 있으면(Windows / Mac) 같은 파일을 저장만 해도
+# "전체 줄이 바뀐 것"처럼 보이는 diff 가 생긴다. 이 파일이 그걸 막는다.
+#
+# 저장소에는 항상 LF 로 넣고, 각자 컴퓨터에서는 OS에 맞게 꺼내 쓴다.
+
+* text=auto eol=lf
+
+# 아래 확장자는 바이너리 — 절대 변환하지 않는다
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.webp binary
+*.ico  binary
+*.pdf  binary
+*.woff binary
+*.woff2 binary
