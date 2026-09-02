@@ -1,0 +1,264 @@
+// SPOT — lib/types.ts 를 옮긴 것
+// ★ 필드 이름은 lib/types.ts 와 같아야 한다. 바꾸면 화면 41개를 다시 고쳐야 한다.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/**
+ * ── enum ── lib/types.ts 의 유니온 타입 그대로 ────────────
+ */
+
+/// 센서가 판단한 결과. offline·manual·disabled·ev 는 저장하지 않는다.
+/// 그건 SlotView(파생 상태)이고 lib/status.ts 의 slotStatus() 가 계산한다.
+enum SlotStatus {
+  available
+  occupied
+  unknown
+}
+
+/// ParkingSlot.type — 'ev' | 'disabled' | null
+enum SlotType {
+  ev
+  disabled
+}
+
+enum TableStatus {
+  available
+  occupied
+  reserved
+  cleaning
+  disabled
+}
+
+enum SensorState {
+  online
+  offline
+}
+
+/// Reservation(손님) 3개 + AdminReservation(관리자) 3개를 합쳤다. 아래 설명 참조.
+enum ReservationStatus {
+  upcoming
+  seated
+  done
+  noshow
+  canceled
+}
+
+enum LogTone {
+  ok
+  warn
+  busy
+  brand
+  off
+}
+
+/**
+ * ── 매장 ── PartnerStore + PlainStore 를 한 모델로 ────────
+ */
+
+model Store {
+  id      String  @id // 's1' 'p1' — seed 가 직접 넣는다
+  partner Boolean
+  name    String
+  cat     String
+  lat     Float // 목업 지도 좌표 0~100
+  lng     Float
+
+  // ↓ partner = true 인 매장만 채운다 (PlainStore 는 전부 null)
+  addr    String?
+  tel     String?
+  open    String?
+  price   String?
+  rating  Float       @default(0)
+  reviews Int         @default(0) // ★ 리뷰 '개수'. 관계가 아니다
+  tags    String[]    @default([])
+  hero    String?
+  sensor  SensorState @default(online)
+
+  tablesUpdated  DateTime?
+  parkingFee     String? // 구 parking.fee
+  parkingUpdated DateTime? // 구 parking.updated
+
+  tables       StoreTable[]
+  slots        ParkingSlot[] // 구 parking.slots
+  menus        Menu[]
+  reservations Reservation[]
+  reviewList   Review[] // ★ 관계 필드. 위 reviews(Int) 와 이름이 겹치면 안 된다
+  logs         ActivityLog[]
+
+  @@index([partner])
+}
+
+/**
+ * ── 주차면 ───────────────────────────────────────────────
+ */
+
+model ParkingSlot {
+  id      String @id @default(cuid()) // ★ types.ts 에 없던 필드. 아래 설명 참조
+  storeId String
+  code    String // 'A1' — 손님 화면에 노출하지 않는다
+  row     Int
+  col     Int
+  zone    String
+
+  /// 센서(D)만 쓴다
+  autoStatus   SlotStatus  @default(unknown)
+  /// 관리자(B)만 쓴다
+  manualStatus SlotStatus?
+  /// 지나면 자동으로 센서 값으로 돌아간다
+  manualUntil  DateTime?
+  manualBy     String?
+
+  type       SlotType?
+  nearGate   Boolean   @default(false)
+  confidence Float     @default(0)
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@unique([storeId, code]) // 같은 매장에 A1 이 둘일 수 없다
+  @@index([storeId])
+}
+
+/**
+ * ── 테이블 ───────────────────────────────────────────────
+ */
+
+model StoreTable {
+  id      String      @id @default(cuid()) // ★ 구 't1' 은 code 로 내려갔다
+  storeId String
+  code    String // 't1' — 매장 안에서만 유일하다
+  seats   Int
+  status  TableStatus @default(available)
+  row     Int
+  col     Int
+  w       Int         @default(1) // 배치도에서 차지하는 칸 수
+
+  guest      Int?
+  since      String? // '12:04'
+  cleaningAt DateTime? // 40초 뒤 자동 available
+
+  resAt    String? // '12:30'
+  resName  String?
+  resParty Int?
+
+  store        Store         @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  reservations Reservation[]
+
+  @@unique([storeId, code])
+  @@index([storeId])
+}
+
+/**
+ * ── 대표 메뉴 ── mock 의 MENUS 가 전 매장 공용이라 매장별로 분리 ──
+ */
+
+model Menu {
+  id      String @id @default(cuid())
+  storeId String
+  name    String
+  price   String // '14,000' — mock 형식 유지
+  order   Int    @default(0)
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@index([storeId])
+}
+
+/**
+ * ── 공영주차장 ───────────────────────────────────────────
+ */
+
+model PublicLot {
+  id        String   @id // 'L1'
+  name      String
+  gu        String
+  addr      String
+  type      String // '노외'
+  total     Int
+  available Int
+  fee       String
+  dayMax    String
+  hours     String
+  tel       String
+  lat       Float
+  lng       Float
+  updated   DateTime @default(now())
+  near      Json // [['s1',260], ['p1',180]] 그대로
+}
+
+/**
+ * ── 예약 ── Reservation + AdminReservation 통합 ──────────
+ */
+
+model Reservation {
+  id      String  @id @default(cuid())
+  storeId String
+  tableId String? // 예약 시점엔 null. 관리자가 입장시킬 때 채운다
+
+  date     String // '2026-08-24'
+  time     String // '12:30'
+  party    Int
+  seatType String
+  status   ReservationStatus @default(upcoming)
+
+  name  String
+  phone String
+  memo  String @default("")
+
+  parkingAlert Boolean @default(false)
+  exited       Boolean @default(false)
+  receipt      Boolean @default(false) // 영수증 올렸는가 → 리뷰쓰기 활성 조건
+  reviewed     Boolean @default(false)
+
+  createdAt DateTime @default(now())
+
+  store  Store       @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  table  StoreTable? @relation(fields: [tableId], references: [id])
+  review Review?
+
+  @@unique([storeId, date, time, phone]) // 같은 사람이 같은 시간에 두 번 못 잡는다
+  @@index([phone]) // GET /api/reservations?phone=
+  @@index([storeId, date]) // 관리자 예약 달력
+}
+
+/**
+ * ── 리뷰 ─────────────────────────────────────────────────
+ */
+
+model Review {
+  id            String   @id @default(cuid())
+  storeId       String
+  reservationId String?  @unique // 방문 1건당 리뷰 1개
+  name          String // '김**'
+  rating        Int
+  text          String
+  createdAt     DateTime @default(now()) // 구 date('3일 전') → agoText() 로 만든다
+
+  store       Store        @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  reservation Reservation? @relation(fields: [reservationId], references: [id])
+
+  @@index([storeId])
+}
+
+/**
+ * ── 관리자 로그 ── 구 LogEntry ───────────────────────────
+ */
+
+model ActivityLog {
+  id      String   @id @default(cuid())
+  storeId String
+  at      DateTime @default(now()) // 구 t
+  who     String // '센서' | '최영호' | '시스템'
+  msg     String
+  tone    LogTone
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@index([storeId, at])
+}
